@@ -41,7 +41,7 @@ typedef enum
   MICROS_ON = 0x6,
   MICROS_OFF = 0x7,
   PROGRAM = 0x8,
-  STREAM_MODE = 0x9,
+  DEBUG = 0x9,
   MAX_CMD
 } data_cmd_t;
 
@@ -49,8 +49,7 @@ typedef enum
 
 /* Private define ------------------------------------------------------------*/
 /* USER CODE BEGIN PD */
-#define ADC_BUF_LEN 300
-#define ADC_BUF_HALF_LEN 150
+#define ADC_BUF_LEN 3
 #define MSG_DATA_LEN 4
 
 typedef struct
@@ -75,14 +74,11 @@ UART_HandleTypeDef huart1;
 
 /* USER CODE BEGIN PV */
 volatile uint16_t adc_buf[ADC_BUF_LEN];
-volatile uint16_t adc_read_buf[ADC_BUF_HALF_LEN];
 volatile uint8_t uart_buf[5];
 volatile float source_voltage = 0;
 volatile float current1 = 0;
 volatile float current2 = 0;
 volatile bool running = false;
-volatile bool stream_adc = false;
-volatile bool adc_data_updated = false;
 volatile uint32_t cycle_count = 0;
 volatile uint32_t run_until_cycle = -1;
 volatile uint32_t on_time = 3000;
@@ -90,7 +86,7 @@ volatile uint32_t off_time = 7000;
 
 volatile uint32_t led_on_values[4] = {-1, -1, -1, -1};
 
-command_t update_packets[MAX_CMD - 1];
+command_t update_packets[MAX_CMD];
 /* USER CODE END PV */
 
 /* Private function prototypes -----------------------------------------------*/
@@ -142,16 +138,13 @@ int main(void)
   MX_TIM3_Init();
   MX_USART1_UART_Init();
   /* USER CODE BEGIN 2 */
-  HAL_ADC_Start_DMA(&hadc1, (uint32_t *)adc_buf, ADC_BUF_LEN);
+  HAL_ADC_Start_DMA(&hadc1, (uint16_t *)adc_buf, ADC_BUF_LEN);
   HAL_UART_Receive_IT(&huart1, uart_buf, MSG_DATA_LEN + 1);
 
-  for (uint8_t i = 0; i < MAX_CMD - 1; i++)
+  for (uint8_t i = 0; i < MAX_CMD; i++)
   {
     update_packets[i].command = i;
   }
-
-  command_t adc_stream_cmd = {.command = STREAM_MODE};
-  *((uint16_t *)adc_stream_cmd.data) = ADC_BUF_HALF_LEN;
   /* USER CODE END 2 */
 
   /* Infinite loop */
@@ -161,34 +154,24 @@ int main(void)
     /* USER CODE END WHILE */
 
     /* USER CODE BEGIN 3 */
-    if (stream_adc)
-    {
-      if (adc_data_updated)
-      {
-        adc_data_updated = false;
-        HAL_UART_Transmit(&huart1, (uint8_t *)&adc_stream_cmd, sizeof(command_t), HAL_MAX_DELAY);
-        HAL_UART_Transmit(&huart1, adc_read_buf, ADC_BUF_HALF_LEN * sizeof(uint16_t), HAL_MAX_DELAY);
-      }
-    }
-    else
-    {
-      // send the normal data
-      source_voltage = 6.1 * (adc_buf[0] / 4095.0);
-      current1 = 0.007245213392640534 * adc_buf[1] - 15.265676481016202;
-      current2 = 0.007245213392640534 * adc_buf[2] - 15.265676481016202;
-      update_packets[RUN].data[0] = running;
-      memcpy(&update_packets[CYCLE].data, &cycle_count, sizeof(cycle_count));
-      memcpy(&update_packets[VOLTAGE].data, &source_voltage, sizeof(source_voltage));
-      memcpy(&update_packets[CURRENT1].data, &current1, sizeof(current1));
-      memcpy(&update_packets[CURRENT2].data, &current2, sizeof(current2));
-      update_packets[BUTTON].data[0] = HAL_GPIO_ReadPin(BTN_GPIO_Port, BTN_Pin) == GPIO_PIN_RESET;
-      memcpy(&update_packets[MICROS_ON].data, &on_time, sizeof(uint32_t));
-      memcpy(&update_packets[MICROS_OFF].data, &off_time, sizeof(uint32_t));
 
-      HAL_UART_Transmit(&huart1, update_packets, sizeof(update_packets), HAL_MAX_DELAY);
+    // send the normal data
+    HAL_GPIO_TogglePin(LED2_GPIO_Port, LED2_Pin);
+    source_voltage = 6.1 * (adc_buf[0] / 4095.0);
+    current1 = 0.007245213392640534 * adc_buf[1] - 15.265676481016202;
+    current2 = 0.007245213392640534 * adc_buf[2] - 15.265676481016202;
+    update_packets[RUN].data[0] = running;
+    memcpy(&update_packets[CYCLE].data, &cycle_count, sizeof(cycle_count));
+    memcpy(&update_packets[VOLTAGE].data, &source_voltage, sizeof(source_voltage));
+    memcpy(&update_packets[CURRENT1].data, &current1, sizeof(current1));
+    memcpy(&update_packets[CURRENT2].data, &current2, sizeof(current2));
+    update_packets[BUTTON].data[0] = HAL_GPIO_ReadPin(BTN_GPIO_Port, BTN_Pin) == GPIO_PIN_RESET;
+    memcpy(&update_packets[MICROS_ON].data, &on_time, sizeof(uint32_t));
+    memcpy(&update_packets[MICROS_OFF].data, &off_time, sizeof(uint32_t));
 
-      HAL_Delay(50);
-    }
+    HAL_UART_Transmit(&huart1, update_packets, sizeof(update_packets), HAL_MAX_DELAY);
+
+    HAL_Delay(500);
   }
   /* USER CODE END 3 */
 }
@@ -267,12 +250,12 @@ static void MX_ADC1_Init(void)
   hadc1.Init.EOCSelection = ADC_EOC_SEQ_CONV;
   hadc1.Init.LowPowerAutoWait = DISABLE;
   hadc1.Init.LowPowerAutoPowerOff = DISABLE;
-  hadc1.Init.ContinuousConvMode = ENABLE;
+  hadc1.Init.ContinuousConvMode = DISABLE;
   hadc1.Init.NbrOfConversion = 1;
   hadc1.Init.DiscontinuousConvMode = DISABLE;
   hadc1.Init.ExternalTrigConv = ADC_SOFTWARE_START;
   hadc1.Init.ExternalTrigConvEdge = ADC_EXTERNALTRIGCONVEDGE_NONE;
-  hadc1.Init.DMAContinuousRequests = ENABLE;
+  hadc1.Init.DMAContinuousRequests = DISABLE;
   hadc1.Init.Overrun = ADC_OVR_DATA_OVERWRITTEN;
   hadc1.Init.SamplingTimeCommon1 = ADC_SAMPLETIME_12CYCLES_5;
   hadc1.Init.OversamplingMode = DISABLE;
@@ -450,19 +433,13 @@ static void MX_GPIO_Init(void)
   HAL_GPIO_Init(GPIOB, &GPIO_InitStruct);
 }
 
-void HAL_ADC_ConvHalfCpltCallback(ADC_HandleTypeDef *hadc)
-{
-  // HAL_GPIO_TogglePin(LED2_GPIO_Port, LED2_Pin);
-  memcpy(adc_read_buf, adc_buf, ADC_BUF_HALF_LEN * sizeof(uint16_t));
-  adc_data_updated = true;
-}
-
 /* USER CODE BEGIN 4 */
 void HAL_ADC_ConvCpltCallback(ADC_HandleTypeDef *hadc)
 {
-  // HAL_GPIO_TogglePin(LED1_GPIO_Port, LED1_Pin);
-  memcpy(adc_read_buf, adc_buf + ADC_BUF_HALF_LEN, ADC_BUF_HALF_LEN * sizeof(uint16_t));
-  adc_data_updated = true;
+  HAL_GPIO_TogglePin(LED1_GPIO_Port, LED1_Pin);
+  // memcpy(adc_read_buf, adc_buf + ADC_BUF_HALF_LEN, ADC_BUF_HALF_LEN * sizeof(uint16_t));
+  // adc_data_updated = true;
+  HAL_ADC_Start_DMA(&hadc1, (uint16_t *)adc_buf, ADC_BUF_LEN);
 }
 
 void HAL_TIM_PWM_PulseFinishedCallback(TIM_HandleTypeDef *htim)
@@ -517,26 +494,25 @@ void HAL_UART_RxCpltCallback(UART_HandleTypeDef *huart)
     __HAL_TIM_SET_AUTORELOAD(&htim3, on_time + off_time);
     break;
   case PROGRAM:
-    // HAL_FLASH_Unlock();
-    // HAL_FLASH_OB_Unlock();
-    // SET_BIT(FLASH->OPTR, FLASH_OPTR_nBOOT1);
-    // SET_BIT(FLASH->OPTR, FLASH_OPTR_nBOOT_SEL);
-    // CLEAR_BIT(FLASH->OPTR, FLASH_OPTR_nBOOT0);
-    // while (READ_BIT(FLASH->SR, FLASH_SR_BSY1))
-    // {
-    //   // wait for flash operation to finish
-    // }
-    // SET_BIT(FLASH->CR, FLASH_CR_OPTSTRT);
-    // while (READ_BIT(FLASH->SR, FLASH_SR_BSY1))
-    // {
-    //   // wait for flash operation to finish
-    // }
-    // SET_BIT(FLASH->CR, FLASH_CR_OBL_LAUNCH);
-    // HAL_NVIC_SystemReset();
+    HAL_FLASH_Unlock();
+    HAL_FLASH_OB_Unlock();
+    SET_BIT(FLASH->OPTR, FLASH_OPTR_nBOOT1);
+    SET_BIT(FLASH->OPTR, FLASH_OPTR_nBOOT_SEL);
+    CLEAR_BIT(FLASH->OPTR, FLASH_OPTR_nBOOT0);
+    while (READ_BIT(FLASH->SR, FLASH_SR_BSY1))
+    {
+      // wait for flash operation to finish
+    }
+    SET_BIT(FLASH->CR, FLASH_CR_OPTSTRT);
+    while (READ_BIT(FLASH->SR, FLASH_SR_BSY1))
+    {
+      // wait for flash operation to finish
+    }
+    SET_BIT(FLASH->CR, FLASH_CR_OBL_LAUNCH);
+    HAL_NVIC_SystemReset();
     break;
-  case STREAM_MODE:
-    stream_adc = (bool)uart_buf[1];
-    HAL_GPIO_TogglePin(LED1_GPIO_Port, LED1_Pin);
+  case DEBUG:
+    HAL_GPIO_TogglePin(LED5_GPIO_Port, LED5_Pin);
     break;
   }
   HAL_UART_Receive_IT(&huart1, uart_buf, MSG_DATA_LEN + 1);
